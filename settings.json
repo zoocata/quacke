@@ -1,5 +1,15 @@
 {
   "LastQ3Path": "D:\\CPMA\\Q3",
   "LastSelectedConnection": "",
-  "LastSelectedInstance": ""
+  "LastSelectedInstance": "",
+  "FirstRunCompleted": true,
+  "Pak0Path": "D:\\CPMA\\Q3\\baseq3\\pak0.pk3",
+  "CpmaPath": "D:\\CPMA\\Q3",
+  "ServerExecutablePath": "D:\\CPMA\\Q3\\cnq3-server-x64.exe",
+  "MapsPath": "",
+  "MapSyncEnabled": true,
+  "MapSyncIntervalHours": 24,
+  "LastMapRepoCheck": "0001-01-01T00:00:00",
+  "AutoUpdateMaps": false,
+  "MapRepositoryUrl": "https://github.com/YOUR_USERNAME/quacke-maps"
 }

@@ -6,22 +6,32 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using QuakeServerManager.Models;
 using QuakeServerManager.Services;
+using QuakeServerManager.Services.Ssh;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+using System.IO;
 using System.Threading.Tasks;
 
 namespace QuakeServerManager.ViewModels
 {
-    public class MainViewModel : INotifyPropertyChanged
+    public class MainViewModel : ViewModelBase
     {
         private readonly DataService _dataService;
         private readonly SshService _sshService;
-        private VpsConnection? _selectedVpsConnection;
-        private ServerInstance? _selectedServerInstance;
+        public VpsManagerViewModel VpsManager { get; }
+
+        public ServerManagerViewModel ServerManager { get; }
+
         private string _q3Path = string.Empty;
         private string _statusMessage = "Ready";
-        private string _terminalOutput = string.Empty;
+        public ObservableCollection<LogEntry> TerminalOutput { get; } = new();
+        private string _terminalOutputText = string.Empty;
+        public string TerminalOutputText
+        {
+            get => _terminalOutputText;
+            private set => SetProperty(ref _terminalOutputText, value);
+        }
         private bool _isPasswordAuth = true;
         private bool _isQ3PathValid = false;
         private string _q3ValidationMessage = string.Empty;
@@ -31,16 +41,37 @@ namespace QuakeServerManager.ViewModels
         private double _deploymentProgress = 0.0;
         private string _deploymentStatus = string.Empty;
 
-        public MainViewModel()
+        private readonly IDialogService _dialogService;
+
+        public MainViewModel(Window? owner = null)
         {
             _dataService = new DataService();
             _sshService = new SshService();
+            _dialogService = new DialogService();
+            VpsManager = new VpsManagerViewModel(_dataService, _dialogService, owner);
+            ServerManager = new ServerManagerViewModel(_dataService, _dialogService, owner, this);
+            
+            // Propagate property changes from nested view models
+            VpsManager.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(VpsManager.SelectedVpsConnection))
+                {
+                    OnPropertyChanged(nameof(SelectedVpsConnection));
+                    // Load server instances when VPS connection changes
+                    LoadServerInstancesAsync();
+                }
+            };
+            ServerManager.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(ServerManager.SelectedServerInstance))
+                    OnPropertyChanged(nameof(SelectedServerInstance));
+            };
             
             // Connect SSH service logging to terminal output
-            _sshService.LogMessage += (message) => LogToTerminal(message);
+            _sshService.LogMessage += (message, level) => LogToTerminal(message, level);
+            _sshService.HostKeyReceived += OnHostKeyReceived;
+
             
-            VpsConnections = new ObservableCollection<VpsConnection>();
-            ServerInstances = new ObservableCollection<ServerInstance>();
             AvailableClasses = new ObservableCollection<Class>();
 
             InitializeCommands();
@@ -48,71 +79,45 @@ namespace QuakeServerManager.ViewModels
             LoadDataAsync();
         }
 
-        public ObservableCollection<VpsConnection> VpsConnections { get; }
-        public ObservableCollection<ServerInstance> ServerInstances { get; }
+
+
         public ObservableCollection<Class> AvailableClasses { get; }
 
-        public VpsConnection? SelectedVpsConnection
+        // Pass-through properties for nested view models to simplify XAML bindings
+        public System.Collections.ObjectModel.ObservableCollection<QuakeServerManager.Models.VpsConnection> VpsConnections => VpsManager.VpsConnections;
+
+        public QuakeServerManager.Models.VpsConnection? SelectedVpsConnection
         {
-            get => _selectedVpsConnection;
+            get => VpsManager.SelectedVpsConnection;
             set
             {
-                SetProperty(ref _selectedVpsConnection, value);
-                
-                if (value == null)
+                if (VpsManager.SelectedVpsConnection != value)
                 {
-                    // Clear all imported state when no VPS is selected
-                    ServerInstances.Clear();
-                    SelectedServerInstance = null;
-                    CurrentDeploymentState = null;
-                    RetainInitialValues = false;
+                    VpsManager.SelectedVpsConnection = value;
+                    OnPropertyChanged();
                 }
-                else
-                {
-                    // Load server instances for the selected VPS
-                    LoadServerInstancesAsync();
-                }
-                
-                OnPropertyChanged(nameof(CanRetainInitialValues));
-                
-                // Update password box when VPS selection changes
-                if (value != null && App.Current.MainWindow is MainWindow mainWindow)
-                {
-                    mainWindow.UpdatePasswordBox(value.Password);
-                }
-                
-                // Save the selected connection to settings
-                SaveSelectedConnectionToSettings();
             }
         }
 
-        public ServerInstance? SelectedServerInstance
+        public System.Collections.ObjectModel.ObservableCollection<QuakeServerManager.Models.ServerInstance> ServerInstances => ServerManager.ServerInstances;
+
+        public QuakeServerManager.Models.ServerInstance? SelectedServerInstance
         {
-            get => _selectedServerInstance;
+            get => ServerManager.SelectedServerInstance;
             set
             {
-                // Unsubscribe from previous instance's PropertyChanged event
-                if (_selectedServerInstance != null)
+                if (ServerManager.SelectedServerInstance != value)
                 {
-                    _selectedServerInstance.PropertyChanged -= OnSelectedServerInstancePropertyChanged;
-                }
-
-                if (SetProperty(ref _selectedServerInstance, value))
-                {
-                    // Subscribe to new instance's PropertyChanged event
-                    if (_selectedServerInstance != null)
-                    {
-                        _selectedServerInstance.PropertyChanged += OnSelectedServerInstancePropertyChanged;
-                    }
-                    
-                    // Notify that CanRetainInitialValues may have changed
+                    ServerManager.SelectedServerInstance = value;
+                    OnPropertyChanged();
                     OnPropertyChanged(nameof(CanRetainInitialValues));
-                    
-                    // Raise CanExecuteChanged for server control commands when selection changes
-                    CommandManager.InvalidateRequerySuggested();
                 }
             }
         }
+
+
+
+
 
         public string Q3Path
         {
@@ -149,11 +154,7 @@ namespace QuakeServerManager.ViewModels
             set => SetProperty(ref _statusMessage, value);
         }
 
-        public string TerminalOutput
-        {
-            get => _terminalOutput;
-            set => SetProperty(ref _terminalOutput, value);
-        }
+
 
         public bool IsPasswordAuth
         {
@@ -190,9 +191,8 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        public bool CanRetainInitialValues => SelectedServerInstance != null && 
-                                            ServerInstances.Count > 0 && 
-                                            ServerInstances.IndexOf(SelectedServerInstance) == 0;
+        public bool CanRetainInitialValues => ServerManager.SelectedServerInstance != null && 
+                                            ServerManager.ServerInstances.Count > 0;
 
         public DeploymentState? CurrentDeploymentState
         {
@@ -230,24 +230,24 @@ namespace QuakeServerManager.ViewModels
         public ICommand StartServerCommand { get; private set; } = null!;
         public ICommand StopServerCommand { get; private set; } = null!;
         public ICommand RestartServerCommand { get; private set; } = null!;
-        public ICommand SyncMapsCommand { get; private set; } = null!;
         public ICommand ImportExistingConfigurationsCommand { get; private set; } = null!;
+        public ICommand UploadCustomMapsCommand { get; private set; } = null!;
 
         private void InitializeCommands()
         {
-            AddVpsCommand = new RelayCommand(AddVps);
-            DeleteVpsCommand = new RelayCommand(DeleteVps, CanDeleteVps);
+            AddVpsCommand = new RelayCommand(VpsManager.AddVps);
+            DeleteVpsCommand = new RelayCommand(VpsManager.DeleteVps, () => VpsManager.SelectedVpsConnection != null);
             TestConnectionCommand = new RelayCommand(TestConnection, CanTestConnection);
             BrowseKeyCommand = new RelayCommand(BrowseKey);
-            AddInstanceCommand = new RelayCommand(AddInstance, CanAddInstance);
-            DeleteInstanceCommand = new RelayCommand(DeleteInstance, CanDeleteInstance);
+            AddInstanceCommand = new RelayCommand(() => ServerManager.AddInstance(VpsManager.SelectedVpsConnection.Name), () => VpsManager.SelectedVpsConnection != null);
+            DeleteInstanceCommand = new RelayCommand(() => ServerManager.DeleteInstance(VpsManager.SelectedVpsConnection.Name), () => ServerManager.SelectedServerInstance != null && VpsManager.SelectedVpsConnection != null);
             BrowseQ3PathCommand = new RelayCommand(BrowseQ3Path);
             DeployServerCommand = new RelayCommand(DeployServer, CanDeployServer);
             StartServerCommand = new RelayCommand(StartServer, CanControlServer);
             StopServerCommand = new RelayCommand(StopServer, CanControlServer);
             RestartServerCommand = new RelayCommand(RestartServer, CanControlServer);
-            SyncMapsCommand = new RelayCommand(SyncMaps, CanSyncMaps);
             ImportExistingConfigurationsCommand = new RelayCommand(ImportExistingConfigurations, CanImportExistingConfigurations);
+            UploadCustomMapsCommand = new RelayCommand(UploadCustomMaps, () => ServerManager.SelectedServerInstance != null);
         }
 
         private void InitializeClasses()
@@ -326,13 +326,15 @@ namespace QuakeServerManager.ViewModels
             });
         }
 
-        public void LogToTerminal(string message)
+        public void LogToTerminal(string message, LogLevel level = LogLevel.Info)
         {
             // Ensure we're on the UI thread when updating the terminal
             System.Windows.Application.Current.Dispatcher.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                TerminalOutput += $"[{timestamp}] {message}\n";
+                var entry = new LogEntry(message, level);
+                TerminalOutput.Add(entry);
+                TerminalOutputText += $"[{entry.Timestamp:HH:mm:ss}] {entry.Message}{System.Environment.NewLine}";
+                OnPropertyChanged(nameof(TerminalOutputText));
             });
         }
 
@@ -340,12 +342,7 @@ namespace QuakeServerManager.ViewModels
         {
             try
             {
-                var connections = await _dataService.LoadVpsConnectionsAsync();
-                VpsConnections.Clear();
-                foreach (var connection in connections)
-                {
-                    VpsConnections.Add(connection);
-                }
+                VpsManager.LoadVpsConnections();
 
                 var settings = await _dataService.LoadSettingsAsync();
                 Q3Path = settings.LastQ3Path;
@@ -355,144 +352,54 @@ namespace QuakeServerManager.ViewModels
                 
                 if (!IsQ3PathValid && !string.IsNullOrWhiteSpace(Q3Path))
                 {
-                    LogToTerminal("Warning: Invalid Q3 installation path detected. Please set a valid path in Settings.");
+                    LogToTerminal("Warning: Invalid Q3 installation path detected. Please set a valid path in Settings.", LogLevel.Warning);
                 }
                 
                 // Restore last selected connection and load its server instances
                 if (!string.IsNullOrWhiteSpace(settings.LastSelectedConnection))
                 {
-                    var lastConnection = VpsConnections.FirstOrDefault(c => c.Name == settings.LastSelectedConnection);
+                    var lastConnection = VpsManager.VpsConnections.FirstOrDefault(c => c.Name == settings.LastSelectedConnection);
                     if (lastConnection != null)
                     {
-                        SelectedVpsConnection = lastConnection;
+                        VpsManager.SelectedVpsConnection = lastConnection;
                         LogToTerminal($"Restored last selected connection: {lastConnection.Name}");
                     }
                 }
                 
-                LogToTerminal("Application started successfully.");
+                LogToTerminal("Application started successfully.", LogLevel.Success);
             }
             catch (Exception ex)
             {
-                LogToTerminal($"Error loading data: {ex.Message}");
+                LogToTerminal($"Error loading data: {ex.Message}", LogLevel.Error);
                 System.Windows.MessageBox.Show($"Error loading data: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        private async void LoadServerInstancesAsync()
+        private void LoadServerInstancesAsync()
         {
-            if (SelectedVpsConnection == null) return;
-
-            try
-            {
-                var instances = await _dataService.LoadServerInstancesAsync(SelectedVpsConnection.Name);
-                ServerInstances.Clear();
-                foreach (var instance in instances)
-                {
-                    ServerInstances.Add(instance);
-                }
-                OnPropertyChanged(nameof(CanRetainInitialValues));
-                
-                // Load deployment state
-                CurrentDeploymentState = await _dataService.LoadDeploymentStateAsync(SelectedVpsConnection.Name);
-                
-                // Update IsDeployed status for each instance based on local state
-                foreach (var instance in ServerInstances)
-                {
-                    instance.IsDeployed = CurrentDeploymentState?.DeployedInstances?.Contains(instance.Name) ?? false;
-                }
-                
-                LogToTerminal($"Loaded {instances.Count} server instances for {SelectedVpsConnection.Name}");
-                LogToTerminal($"Deployment state: {CurrentDeploymentState?.DeployedInstances?.Count ?? 0} deployed instances");
-                
-                // Force UI refresh
-                OnPropertyChanged(nameof(ServerInstances));
-                CommandManager.InvalidateRequerySuggested();
-                
-                // Automatically sync deployment state with server to ensure accuracy
-                // Run this in the background to avoid blocking the UI
-                _ = Task.Run(async () =>
-                {
-                    // Small delay to ensure UI is fully loaded first
-                    await Task.Delay(500);
-                    await SyncDeploymentStateWithServerAsync();
-                });
-            }
-            catch (Exception ex)
-            {
-                LogToTerminal($"Error loading instances: {ex.Message}");
-                System.Windows.MessageBox.Show($"Error loading instances: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            if (VpsManager.SelectedVpsConnection == null) return;
+            ServerManager.LoadServerInstances(VpsManager.SelectedVpsConnection.Name);
         }
 
-        private void AddVps()
-        {
-            var name = Microsoft.VisualBasic.Interaction.InputBox("Enter VPS name:", "Add VPS", "");
-            if (string.IsNullOrWhiteSpace(name)) return;
 
-            if (VpsConnections.Any(v => v.Name == name))
-            {
-                System.Windows.MessageBox.Show("A VPS with this name already exists.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
-            var newVps = new VpsConnection { Name = name };
-            VpsConnections.Add(newVps);
-            SelectedVpsConnection = newVps;
-            
-            LogToTerminal($"Added new VPS: {name}");
-        }
-
-        private async void DeleteVps()
-        {
-            if (SelectedVpsConnection == null) return;
-
-            var result = System.Windows.MessageBox.Show($"Delete VPS '{SelectedVpsConnection.Name}'?", "Confirm Delete", 
-                MessageBoxButton.YesNo, MessageBoxImage.Question);
-            
-            if (result == MessageBoxResult.Yes)
-            {
-                // Store the VPS name for logging before deletion
-                var vpsName = SelectedVpsConnection.Name;
-                
-                // Clear all imported state before deleting the VPS
-                ServerInstances.Clear();
-                SelectedServerInstance = null;
-                CurrentDeploymentState = null;
-                RetainInitialValues = false;
-                
-                // Reset class configurations to default
-                InitializeClasses();
-                
-                // Delete the VPS connection from data service
-                await _dataService.DeleteVpsConnectionAsync(vpsName);
-                
-                // Remove from UI collection
-                VpsConnections.Remove(SelectedVpsConnection);
-                SelectedVpsConnection = null;
-                
-                LogToTerminal($"VPS '{vpsName}' deleted successfully. All imported server configurations, deployment state, and class configurations have been cleared.");
-            }
-        }
-
-                private bool CanDeleteVps() => SelectedVpsConnection != null;
 
         private async void TestConnection()
         {
-            if (SelectedVpsConnection == null) return;
+            if (VpsManager.SelectedVpsConnection == null) return;
 
             StatusMessage = "Testing connection...";
-            LogToTerminal($"Testing SSH connection to {SelectedVpsConnection.Ip}:{SelectedVpsConnection.Port}...");
+            LogToTerminal($"Testing SSH connection to {VpsManager.SelectedVpsConnection.Ip}:{VpsManager.SelectedVpsConnection.Port}...");
             
-            var success = await _sshService.TestConnectionAsync(SelectedVpsConnection);
+            var success = await _sshService.TestConnectionAsync(VpsManager.SelectedVpsConnection);
             
             if (success)
             {
                 // If connection test succeeds, automatically save the connection
                 try
                 {
-                    await _dataService.SaveVpsConnectionAsync(SelectedVpsConnection);
+                    await _dataService.SaveVpsConnectionAsync(VpsManager.SelectedVpsConnection);
                     StatusMessage = "Connection successful and saved!";
-                    LogToTerminal("SSH connection test successful and connection saved!");
+                    LogToTerminal("SSH connection test successful and connection saved!", LogLevel.Success);
                     
                     // Check for existing CPMA installation and import configurations
                     await CheckAndImportExistingConfigurationsAsync();
@@ -500,28 +407,28 @@ namespace QuakeServerManager.ViewModels
                 catch (Exception ex)
                 {
                     StatusMessage = "Connection successful but failed to save!";
-                    LogToTerminal($"SSH connection test successful but failed to save: {ex.Message}");
+                    LogToTerminal($"SSH connection test successful but failed to save: {ex.Message}", LogLevel.Warning);
                     System.Windows.MessageBox.Show($"SSH connection test successful but failed to save: {ex.Message}", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
             else
             {
                 StatusMessage = "Connection failed!";
-                LogToTerminal("SSH connection test failed!");
+                LogToTerminal("SSH connection test failed!", LogLevel.Error);
                 System.Windows.MessageBox.Show("SSH connection test failed. Please check your settings.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private async Task CheckAndImportExistingConfigurationsAsync()
         {
-            if (SelectedVpsConnection == null) return;
+            if (VpsManager.SelectedVpsConnection == null) return;
 
             try
             {
                 LogToTerminal("Checking for existing CPMA installation...");
                 StatusMessage = "Checking for existing CPMA installation...";
                 
-                var hasExistingCpma = await _sshService.CheckForExistingCpmaInstallationAsync(SelectedVpsConnection);
+                var hasExistingCpma = await _sshService.CheckForExistingCpmaInstallationAsync(VpsManager.SelectedVpsConnection);
                 
                 if (hasExistingCpma)
                 {
@@ -538,43 +445,43 @@ namespace QuakeServerManager.ViewModels
                     {
                         LogToTerminal("User chose to import existing configurations. Starting import process...");
                         
-                                                    var importedInstances = await _sshService.ImportExistingServerConfigurationsAsync(SelectedVpsConnection);
+                                                    var importedInstances = await _sshService.ImportExistingServerConfigurationsAsync(VpsManager.SelectedVpsConnection);
                         
                         if (importedInstances.Count > 0)
                         {
                             // Clear existing instances and add imported ones
-                            ServerInstances.Clear();
+                            ServerManager.ServerInstances.Clear();
                             
                             foreach (var instance in importedInstances)
                             {
-                                ServerInstances.Add(instance);
+                                ServerManager.ServerInstances.Add(instance);
                                 // Save each imported instance
-                                await _dataService.SaveServerInstanceAsync(SelectedVpsConnection.Name, instance);
+                                await _dataService.SaveServerInstanceAsync(VpsManager.SelectedVpsConnection.Name, instance);
                             }
                             
                             // Set focus on the first imported instance
                             if (importedInstances.Count > 0)
                             {
-                                SelectedServerInstance = importedInstances[0];
+                                ServerManager.SelectedServerInstance = importedInstances[0];
                             }
                             
                             // Update deployment state
                             var deploymentState = new DeploymentState
                             {
-                                VpsConnectionName = SelectedVpsConnection.Name,
+                                VpsConnectionName = VpsManager.SelectedVpsConnection.Name,
                                 DeployedInstances = importedInstances.Select(i => i.Name).ToList(),
                                 LastDeploymentSync = DateTime.Now
                             };
-                            await _dataService.SaveDeploymentStateAsync(SelectedVpsConnection.Name, deploymentState);
+                            await _dataService.SaveDeploymentStateAsync(VpsManager.SelectedVpsConnection.Name, deploymentState);
                             CurrentDeploymentState = deploymentState;
                             
-                            LogToTerminal($"Successfully imported {importedInstances.Count} server configurations!");
+                            LogToTerminal($"Successfully imported {importedInstances.Count} server configurations!", LogLevel.Success);
                             
                             // Also import class configurations
                             try
                             {
                                 LogToTerminal("Importing class configurations...");
-                                var importedClasses = await _sshService.ImportClassConfigurationsAsync(SelectedVpsConnection);
+                                var importedClasses = await _sshService.ImportClassConfigurationsAsync(VpsManager.SelectedVpsConnection);
                                 
                                 if (importedClasses.Count > 0)
                                 {
@@ -583,7 +490,7 @@ namespace QuakeServerManager.ViewModels
                                     {
                                         AvailableClasses.Add(cls);
                                     }
-                                    LogToTerminal($"Successfully imported {importedClasses.Count} class configurations!");
+                                    LogToTerminal($"Successfully imported {importedClasses.Count} class configurations!", LogLevel.Success);
                                     StatusMessage = $"Imported {importedInstances.Count} server configurations and {importedClasses.Count} class configurations!";
                                     
                                     System.Windows.MessageBox.Show(
@@ -595,7 +502,7 @@ namespace QuakeServerManager.ViewModels
                                 }
                                 else
                                 {
-                                    LogToTerminal("No class configurations found to import.");
+                                    LogToTerminal("No class configurations found to import.", LogLevel.Warning);
                                     StatusMessage = $"Imported {importedInstances.Count} server configurations!";
                                     
                                     System.Windows.MessageBox.Show(
@@ -608,7 +515,7 @@ namespace QuakeServerManager.ViewModels
                             }
                             catch (Exception classEx)
                             {
-                                LogToTerminal($"Warning: Server configurations imported successfully, but class import failed: {classEx.Message}");
+                                LogToTerminal($"Warning: Server configurations imported successfully, but class import failed: {classEx.Message}", LogLevel.Warning);
                                 StatusMessage = $"Imported {importedInstances.Count} server configurations!";
                                 
                                 System.Windows.MessageBox.Show(
@@ -621,7 +528,7 @@ namespace QuakeServerManager.ViewModels
                         }
                         else
                         {
-                            LogToTerminal("No server configurations found to import.");
+                            LogToTerminal("No server configurations found to import.", LogLevel.Warning);
                             StatusMessage = "No existing configurations found.";
                             
                             System.Windows.MessageBox.Show(
@@ -645,7 +552,7 @@ namespace QuakeServerManager.ViewModels
             }
             catch (Exception ex)
             {
-                LogToTerminal($"Error during configuration import check: {ex.Message}");
+                LogToTerminal($"Error during configuration import check: {ex.Message}", LogLevel.Error);
                 StatusMessage = "Connection successful but import check failed.";
                 
                 System.Windows.MessageBox.Show(
@@ -656,8 +563,8 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        private bool CanTestConnection() => SelectedVpsConnection != null && 
-            !string.IsNullOrWhiteSpace(SelectedVpsConnection.Ip);
+        private bool CanTestConnection() => VpsManager.SelectedVpsConnection != null && 
+            !string.IsNullOrWhiteSpace(VpsManager.SelectedVpsConnection.Ip);
 
         private void BrowseKey()
         {
@@ -669,91 +576,15 @@ namespace QuakeServerManager.ViewModels
 
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
             {
-                if (SelectedVpsConnection != null)
+                if (VpsManager.SelectedVpsConnection != null)
                 {
-                    SelectedVpsConnection.PrivateKeyPath = dialog.FileName;
+                    VpsManager.SelectedVpsConnection.PrivateKeyPath = dialog.FileName;
                     LogToTerminal($"Selected private key: {dialog.FileName}");
                 }
             }
         }
 
-        private async void AddInstance()
-        {
-            if (SelectedVpsConnection == null) return;
 
-            var name = Microsoft.VisualBasic.Interaction.InputBox("Enter instance name:", "Add Instance", "");
-            if (string.IsNullOrWhiteSpace(name)) return;
-
-            if (ServerInstances.Any(i => i.Name == name))
-            {
-                System.Windows.MessageBox.Show("An instance with this name already exists.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
-            // Get location from existing instances, or use default
-            var existingLocation = ServerInstances.FirstOrDefault()?.Location ?? "Unknown";
-
-            var newInstance = new ServerInstance 
-            { 
-                Name = name,
-                ServerName = name, // Set default server name to instance name
-                Admin = "admin",
-                Location = existingLocation, // Carry over location from existing instances
-                MaxClients = 24,
-                Port = 27960
-            };
-
-            // If RetainInitialValues is enabled and there's a first instance, copy its values (except ServerName)
-            if (RetainInitialValues && ServerInstances.Count > 0)
-            {
-                var firstInstance = ServerInstances[0];
-                newInstance.Admin = firstInstance.Admin;
-                newInstance.Location = firstInstance.Location;
-                newInstance.MaxClients = firstInstance.MaxClients;
-                newInstance.Port = firstInstance.Port;
-                newInstance.RconPassword = firstInstance.RconPassword;
-                newInstance.SelectedClass = firstInstance.SelectedClass;
-            }
-
-                    ServerInstances.Add(newInstance);
-        SelectedServerInstance = newInstance;
-        OnPropertyChanged(nameof(CanRetainInitialValues));
-            
-            // Save the new instance immediately
-            await _dataService.SaveServerInstanceAsync(SelectedVpsConnection.Name, newInstance);
-            
-            LogToTerminal($"Added new server instance: {name}");
-        }
-
-        private bool CanAddInstance() => SelectedVpsConnection != null;
-
-        private async void DeleteInstance()
-        {
-            if (SelectedServerInstance == null || SelectedVpsConnection == null) return;
-
-            var result = System.Windows.MessageBox.Show($"Delete instance '{SelectedServerInstance.Name}'?", "Confirm Delete", 
-                MessageBoxButton.YesNo, MessageBoxImage.Question);
-            
-            if (result == MessageBoxResult.Yes)
-            {
-                var instanceName = SelectedServerInstance.Name;
-                await _dataService.DeleteServerInstanceAsync(SelectedVpsConnection.Name, instanceName);
-                ServerInstances.Remove(SelectedServerInstance);
-                SelectedServerInstance = null;
-                OnPropertyChanged(nameof(CanRetainInitialValues));
-                
-                // Update deployment state to remove the deleted instance
-                if (CurrentDeploymentState != null)
-                {
-                    CurrentDeploymentState.DeployedInstances.RemoveAll(i => i == instanceName);
-                    await _dataService.SaveDeploymentStateAsync(SelectedVpsConnection.Name, CurrentDeploymentState);
-                }
-                
-                LogToTerminal("Server instance deleted successfully.");
-            }
-        }
-
-        private bool CanDeleteInstance() => SelectedServerInstance != null && SelectedVpsConnection != null;
 
         private async void BrowseQ3Path()
         {
@@ -787,24 +618,41 @@ namespace QuakeServerManager.ViewModels
 
         private async void DeployServer()
         {
-            if (SelectedVpsConnection == null || ServerInstances.Count == 0)
+            if (VpsManager.SelectedVpsConnection == null || ServerManager.ServerInstances.Count == 0)
             {
                 System.Windows.MessageBox.Show("Please select a VPS connection with server instances.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            if (!IsQ3PathValid)
+            // Check if all required paths are configured
+            var settings = await _dataService.LoadSettingsAsync();
+            var missingPaths = new List<string>();
+
+            if (string.IsNullOrEmpty(settings.CpmaPath) || !Directory.Exists(settings.CpmaPath))
+                missingPaths.Add("CPMA folder");
+            if (string.IsNullOrEmpty(settings.Pak0Path) || !File.Exists(settings.Pak0Path))
+                missingPaths.Add("pak0.pk3");
+            if (string.IsNullOrEmpty(settings.ServerExecutablePath) || !File.Exists(settings.ServerExecutablePath))
+                missingPaths.Add("Server executable");
+
+            if (missingPaths.Any())
             {
-                System.Windows.MessageBox.Show("Please set a valid Q3 installation path in Settings first.", "Invalid Q3 Path", MessageBoxButton.OK, MessageBoxImage.Warning);
+                System.Windows.MessageBox.Show(
+                    $"The following required files/folders are not configured:\n\n" +
+                    string.Join("\n", missingPaths.Select(p => $"• {p}")) +
+                    "\n\nPlease configure these paths in Settings before deploying.",
+                    "Missing Configuration",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
             // Initialize progress tracking
             IsDeploying = true;
             DeploymentProgress = 0.0;
-            DeploymentStatus = "Initializing deployment...";
-            StatusMessage = "Deploying servers...";
-            LogToTerminal($"Starting deployment of all server instances to {SelectedVpsConnection.Ip}...");
+            DeploymentStatus = "Initializing Docker deployment...";
+            StatusMessage = "Deploying servers via Docker...";
+            LogToTerminal($"Starting Docker deployment of all server instances to {VpsManager.SelectedVpsConnection.Ip}...");
             
             try
             {
@@ -813,22 +661,7 @@ namespace QuakeServerManager.ViewModels
                 {
                     try
                     {
-                        // First, cleanup any orphaned instances
-                        DeploymentProgress = 5.0;
-                        DeploymentStatus = "Checking for orphaned instances...";
-                        LogToTerminal("Checking for orphaned instances...");
-                        var currentInstanceNames = ServerInstances.Select(i => i.Name).ToList();
-                        var cleanupSuccess = await _sshService.CleanupOrphanedInstancesAsync(SelectedVpsConnection, currentInstanceNames);
-                        if (cleanupSuccess)
-                        {
-                            LogToTerminal("Orphaned instances cleanup completed.");
-                        }
-                        else
-                        {
-                            LogToTerminal("Warning: Orphaned instances cleanup failed, but continuing with deployment.");
-                        }
-
-                        // Update deployment state
+                        // Clear deployment state
                         if (CurrentDeploymentState != null)
                         {
                             System.Windows.Application.Current.Dispatcher.Invoke(() =>
@@ -837,62 +670,42 @@ namespace QuakeServerManager.ViewModels
                             });
                         }
 
-                        // Setup VPS environment (once per VPS)
-                        DeploymentProgress = 10.0;
-                        DeploymentStatus = "Setting up VPS environment...";
-                        LogToTerminal("Setting up VPS environment (base directories, packages, Q3 files)...");
-                        
-                        var vpsSetupSuccess = await _sshService.SetupVpsEnvironmentAsync(SelectedVpsConnection, Q3Path, 
+                        // Collect custom maps from all instances
+                        var allCustomMaps = ServerManager.ServerInstances
+                            .SelectMany(i => i.CustomMaps)
+                            .Distinct()
+                            .ToList();
+
+                        // Use Docker deployment
+                        LogToTerminal("Using Docker-based deployment...");
+                        var dockerSuccess = await _sshService.DeployDockerServerAsync(
+                            VpsManager.SelectedVpsConnection,
+                            ServerManager.ServerInstances.ToList(),
+                            settings.Pak0Path,
+                            settings.CpmaPath,
+                            settings.ServerExecutablePath,
+                            settings.MapsPath,
+                            allCustomMaps.Any() ? allCustomMaps : null,
                             (progress, status) =>
                             {
                                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
                                 {
-                                    var scaledProgress = 10.0 + (30.0 * progress / 100.0);
-                                    DeploymentProgress = scaledProgress;
-                                    DeploymentStatus = $"[VPS Setup] {status}";
+                                    DeploymentProgress = progress;
+                                    DeploymentStatus = status;
                                 });
                             });
 
-                        if (!vpsSetupSuccess)
+                        if (dockerSuccess)
                         {
-                            LogToTerminal("VPS environment setup failed. Aborting deployment.");
-                            return false;
-                        }
+                            LogToTerminal("Docker deployment completed successfully!", LogLevel.Success);
 
-                        LogToTerminal("VPS environment setup completed successfully.");
-
-                        // Deploy all instances (instance-specific operations only)
-                        var totalInstances = ServerInstances.Count;
-                        var deployedCount = 0;
-                        var allSuccess = true;
-
-                        foreach (var instance in ServerInstances)
-                        {
-                            var instanceStartProgress = 40.0 + (60.0 * deployedCount / totalInstances);
-                            var instanceEndProgress = 40.0 + (60.0 * (deployedCount + 1) / totalInstances);
-
-                            LogToTerminal($"Deploying instance {deployedCount + 1}/{totalInstances}: {instance.Name}");
-                            DeploymentStatus = $"Deploying {instance.Name}...";
-                            
-                            var instanceSuccess = await _sshService.DeployServerAsync(SelectedVpsConnection, instance, Q3Path, 
-                                (progress, status) =>
-                                {
-                                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                                    {
-                                        var scaledProgress = instanceStartProgress + (instanceEndProgress - instanceStartProgress) * progress / 100.0;
-                                        DeploymentProgress = scaledProgress;
-                                        DeploymentStatus = $"[{instance.Name}] {status}";
-                                    });
-                                });
-
-                            if (instanceSuccess)
+                            // Mark all instances as deployed
+                            System.Windows.Application.Current.Dispatcher.Invoke(() =>
                             {
-                                LogToTerminal($"Successfully deployed {instance.Name}");
-                                
-                                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                                foreach (var instance in ServerManager.ServerInstances)
                                 {
                                     instance.IsDeployed = true;
-                                    
+
                                     // Update deployment state
                                     if (CurrentDeploymentState != null)
                                     {
@@ -901,33 +714,29 @@ namespace QuakeServerManager.ViewModels
                                             CurrentDeploymentState.DeployedInstances.Add(instance.Name);
                                         }
                                     }
-                                    
-                                    // Force UI refresh for the ComboBox
-                                    OnPropertyChanged(nameof(ServerInstances));
-                                });
-                            }
-                            else
-                            {
-                                LogToTerminal($"Failed to deploy {instance.Name}");
-                                allSuccess = false;
-                            }
+                                }
 
-                            deployedCount++;
-                        }
+                                // Update deployment timestamp
+                                if (CurrentDeploymentState != null)
+                                {
+                                    CurrentDeploymentState.LastDeploymentSync = DateTime.Now;
+                                }
 
-                        if (CurrentDeploymentState != null)
-                        {
-                            System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                            {
-                                CurrentDeploymentState.LastDeploymentSync = DateTime.Now;
+                                // Force UI refresh
+                                OnPropertyChanged(nameof(ServerManager.ServerInstances));
                             });
-                        }
 
-                        return allSuccess;
+                            return true;
+                        }
+                        else
+                        {
+                            LogToTerminal("Docker deployment failed.", LogLevel.Error);
+                            return false;
+                        }
                     }
                     catch (Exception ex)
                     {
-                        LogToTerminal($"Deployment error: {ex.Message}");
+                        LogToTerminal($"Deployment error: {ex.Message}", LogLevel.Error);
                         return false;
                     }
                 });
@@ -941,12 +750,12 @@ namespace QuakeServerManager.ViewModels
                         StatusMessage = "All servers deployed successfully!";
                     });
                     
-                    LogToTerminal("All server deployments completed successfully!");
+                    LogToTerminal("All server deployments completed successfully!", LogLevel.Success);
                     
                     // Force UI refresh
                     await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                     {
-                        OnPropertyChanged(nameof(ServerInstances));
+                        OnPropertyChanged(nameof(ServerManager.ServerInstances));
                         CommandManager.InvalidateRequerySuggested();
                     });
                     
@@ -954,11 +763,11 @@ namespace QuakeServerManager.ViewModels
                     await Task.Delay(100);
                     await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                     {
-                        OnPropertyChanged(nameof(ServerInstances));
+                        OnPropertyChanged(nameof(ServerManager.ServerInstances));
                     });
                     
                     // Save deployment state
-                    await _dataService.SaveDeploymentStateAsync(SelectedVpsConnection.Name, CurrentDeploymentState);
+                    await _dataService.SaveDeploymentStateAsync(VpsManager.SelectedVpsConnection.Name, CurrentDeploymentState);
                     
                     // Show success message and bring window to front
                     var result = System.Windows.MessageBox.Show($"All server instances deployed successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -979,12 +788,12 @@ namespace QuakeServerManager.ViewModels
                         StatusMessage = "Server deployment failed!";
                     });
                     
-                    LogToTerminal("Server deployment failed!");
+                    LogToTerminal("Server deployment failed!", LogLevel.Error);
                     
                     // Force UI refresh
                     await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                     {
-                        OnPropertyChanged(nameof(ServerInstances));
+                        OnPropertyChanged(nameof(ServerManager.ServerInstances));
                         CommandManager.InvalidateRequerySuggested();
                     });
                     
@@ -992,11 +801,11 @@ namespace QuakeServerManager.ViewModels
                     await Task.Delay(100);
                     await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                     {
-                        OnPropertyChanged(nameof(ServerInstances));
+                        OnPropertyChanged(nameof(ServerManager.ServerInstances));
                     });
                     
                     // Save deployment state even if failed
-                    await _dataService.SaveDeploymentStateAsync(SelectedVpsConnection.Name, CurrentDeploymentState);
+                    await _dataService.SaveDeploymentStateAsync(VpsManager.SelectedVpsConnection.Name, CurrentDeploymentState);
                     
                     System.Windows.MessageBox.Show("Server deployment failed. Please check your settings and try again.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
@@ -1011,8 +820,8 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        private bool CanDeployServer() => SelectedVpsConnection != null && 
-            SelectedServerInstance != null && 
+        private bool CanDeployServer() => VpsManager.SelectedVpsConnection != null && 
+            ServerManager.SelectedServerInstance != null && 
             IsQ3PathValid;
 
         private void ValidateQ3Path()
@@ -1030,79 +839,79 @@ namespace QuakeServerManager.ViewModels
 
         private async void StartServer()
         {
-            if (SelectedVpsConnection == null || SelectedServerInstance == null) return;
+            if (VpsManager.SelectedVpsConnection == null || ServerManager.SelectedServerInstance == null) return;
 
             StatusMessage = "Starting server...";
-            LogToTerminal($"Starting server '{SelectedServerInstance.Name}'...");
+            LogToTerminal($"Starting server '{ServerManager.SelectedServerInstance.Name}'...");
             
-            var success = await _sshService.StartServerAsync(SelectedVpsConnection, SelectedServerInstance.Name);
+            var success = await _sshService.StartServerAsync(VpsManager.SelectedVpsConnection, ServerManager.SelectedServerInstance.Name);
             
             if (success)
             {
                 StatusMessage = "Server started successfully!";
-                LogToTerminal("Server started successfully!");
-                SelectedServerInstance.IsRunning = true;
+                LogToTerminal("Server started successfully!", LogLevel.Success);
+                ServerManager.SelectedServerInstance.IsRunning = true;
             }
             else
             {
                 StatusMessage = "Failed to start server!";
-                LogToTerminal("Failed to start server!");
+                LogToTerminal("Failed to start server!", LogLevel.Error);
                 System.Windows.MessageBox.Show("Failed to start server. Please check the connection and try again.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private async void StopServer()
         {
-            if (SelectedVpsConnection == null || SelectedServerInstance == null) return;
+            if (VpsManager.SelectedVpsConnection == null || ServerManager.SelectedServerInstance == null) return;
 
             StatusMessage = "Stopping server...";
-            LogToTerminal($"Stopping server '{SelectedServerInstance.Name}'...");
+            LogToTerminal($"Stopping server '{ServerManager.SelectedServerInstance.Name}'...");
             
-            var success = await _sshService.StopServerAsync(SelectedVpsConnection, SelectedServerInstance.Name);
+            var success = await _sshService.StopServerAsync(VpsManager.SelectedVpsConnection, ServerManager.SelectedServerInstance.Name);
             
             if (success)
             {
                 StatusMessage = "Server stopped successfully!";
-                LogToTerminal("Server stopped successfully!");
-                SelectedServerInstance.IsRunning = false;
+                LogToTerminal("Server stopped successfully!", LogLevel.Success);
+                ServerManager.SelectedServerInstance.IsRunning = false;
             }
             else
             {
                 StatusMessage = "Failed to stop server!";
-                LogToTerminal("Failed to stop server!");
+                LogToTerminal("Failed to stop server!", LogLevel.Error);
                 System.Windows.MessageBox.Show("Failed to stop server. Please check the connection and try again.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         private async void RestartServer()
         {
-            if (SelectedVpsConnection == null || SelectedServerInstance == null) return;
+            if (VpsManager.SelectedVpsConnection == null || ServerManager.SelectedServerInstance == null) return;
 
             StatusMessage = "Restarting server...";
-            LogToTerminal($"Restarting server '{SelectedServerInstance.Name}'...");
+            LogToTerminal($"Restarting server '{ServerManager.SelectedServerInstance.Name}'...");
             
-            var success = await _sshService.RestartServerAsync(SelectedVpsConnection, SelectedServerInstance.Name);
+            var success = await _sshService.RestartServerAsync(VpsManager.SelectedVpsConnection, ServerManager.SelectedServerInstance.Name);
             
             if (success)
             {
                 StatusMessage = "Server restarted successfully!";
-                LogToTerminal("Server restarted successfully!");
+                LogToTerminal("Server restarted successfully!", LogLevel.Success);
             }
             else
             {
                 StatusMessage = "Failed to restart server!";
-                LogToTerminal("Failed to restart server!");
+                LogToTerminal("Failed to restart server!", LogLevel.Error);
                 System.Windows.MessageBox.Show("Failed to restart server. Please check the connection and try again.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        private bool CanControlServer() => SelectedVpsConnection != null && SelectedServerInstance != null && SelectedServerInstance.IsDeployed;
+        private bool CanControlServer() => VpsManager.SelectedVpsConnection != null && ServerManager.SelectedServerInstance != null && ServerManager.SelectedServerInstance.IsDeployed;
 
 
 
         private async void ImportExistingConfigurations()
         {
-            if (SelectedVpsConnection == null) return;
+            if (VpsManager.SelectedVpsConnection == null) return;
 
             var result = System.Windows.MessageBox.Show(
                 "This will import existing server configurations from the VPS server. Any current local configurations will be replaced. Continue?",
@@ -1116,18 +925,83 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        private bool CanImportExistingConfigurations() => SelectedVpsConnection != null;
+        private bool CanImportExistingConfigurations() => VpsManager.SelectedVpsConnection != null;
+
+        private void UploadCustomMaps()
+        {
+            if (ServerManager.SelectedServerInstance == null)
+                return;
+
+            var dialog = new QuakeServerManager.Views.MapUploadDialog
+            {
+                Owner = App.Current.MainWindow
+            };
+
+            if (dialog.ShowDialog() == true && dialog.DialogResult)
+            {
+                var mapPaths = dialog.SelectedMaps.Select(m => m.FilePath).ToList();
+
+                if (dialog.ApplyToAllInstances)
+                {
+                    // Add maps to all instances
+                    foreach (var instance in ServerManager.ServerInstances)
+                    {
+                        foreach (var mapPath in mapPaths)
+                        {
+                            if (!instance.CustomMaps.Contains(mapPath))
+                            {
+                                instance.CustomMaps.Add(mapPath);
+                            }
+                        }
+                    }
+
+                    LogToTerminal($"Added {mapPaths.Count} custom map(s) to all {ServerManager.ServerInstances.Count} instances.", LogLevel.Success);
+                    System.Windows.MessageBox.Show(
+                        $"Added {mapPaths.Count} custom map(s) to all instances.\n\nRedeploy servers to apply changes.",
+                        "Maps Added",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                else
+                {
+                    // Add maps to selected instance only
+                    foreach (var mapPath in mapPaths)
+                    {
+                        if (!ServerManager.SelectedServerInstance.CustomMaps.Contains(mapPath))
+                        {
+                            ServerManager.SelectedServerInstance.CustomMaps.Add(mapPath);
+                        }
+                    }
+
+                    LogToTerminal($"Added {mapPaths.Count} custom map(s) to instance '{ServerManager.SelectedServerInstance.Name}'.", LogLevel.Success);
+                    System.Windows.MessageBox.Show(
+                        $"Added {mapPaths.Count} custom map(s) to '{ServerManager.SelectedServerInstance.Name}'.\n\nRedeploy servers to apply changes.",
+                        "Maps Added",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+
+                // Save instance configurations
+                if (VpsManager.SelectedVpsConnection != null)
+                {
+                    foreach (var instance in ServerManager.ServerInstances)
+                    {
+                        _dataService.SaveServerInstanceAsync(VpsManager.SelectedVpsConnection.Name, instance).Wait();
+                    }
+                }
+            }
+        }
 
         private async Task SyncDeploymentStateWithServerAsync()
         {
-            if (SelectedVpsConnection == null || CurrentDeploymentState == null) return;
+            if (VpsManager.SelectedVpsConnection == null || CurrentDeploymentState == null) return;
 
             try
             {
                 LogToTerminal("Syncing deployment state with server...");
                 
                 // Get current instances from server
-                var serverDeployedInstances = await _sshService.GetDeployedInstancesAsync(SelectedVpsConnection);
+                var serverDeployedInstances = await _sshService.GetDeployedInstancesAsync(VpsManager.SelectedVpsConnection);
                 
                 // Update local deployment state to match server
                 System.Windows.Application.Current.Dispatcher.Invoke(() =>
@@ -1138,18 +1012,18 @@ namespace QuakeServerManager.ViewModels
                 });
                 
                 // Save updated deployment state
-                await _dataService.SaveDeploymentStateAsync(SelectedVpsConnection.Name, CurrentDeploymentState);
+                await _dataService.SaveDeploymentStateAsync(VpsManager.SelectedVpsConnection.Name, CurrentDeploymentState);
                 
                 // Update UI on the main thread
                 await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
-                    foreach (var instance in ServerInstances)
+                    foreach (var instance in ServerManager.ServerInstances)
                     {
                         instance.IsDeployed = CurrentDeploymentState.DeployedInstances.Contains(instance.Name);
                     }
                     
                     // Force UI refresh
-                    OnPropertyChanged(nameof(ServerInstances));
+                    OnPropertyChanged(nameof(ServerManager.ServerInstances));
                     CommandManager.InvalidateRequerySuggested();
                 });
                 
@@ -1163,35 +1037,20 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        private async void OnSelectedServerInstancePropertyChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            // When IsDeployed property changes, update command states
-            if (e.PropertyName == nameof(ServerInstance.IsDeployed))
-            {
-                CommandManager.InvalidateRequerySuggested();
-            }
-            
-            // Save the server instance when any property changes
-            if (SelectedServerInstance != null && SelectedVpsConnection != null)
-            {
-                await _dataService.SaveServerInstanceAsync(SelectedVpsConnection.Name, SelectedServerInstance);
-            }
-        }
+
         
-        private async void SaveSelectedConnectionToSettings()
-        {
-            try
-            {
-                var settings = await _dataService.LoadSettingsAsync();
-                settings.LastSelectedConnection = SelectedVpsConnection?.Name ?? string.Empty;
-                await _dataService.SaveSettingsAsync(settings);
-            }
-            catch (Exception ex)
-            {
-                LogToTerminal($"Error saving selected connection to settings: {ex.Message}");
-            }
-        }
         
+        private bool OnHostKeyReceived(string fingerprint)
+        {
+            var result = System.Windows.MessageBox.Show($"The server's host key fingerprint is:\n{fingerprint}\n\nDo you want to trust this host?", "Host Key Verification", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                VpsManager.SelectedVpsConnection.HostKeyFingerprint = fingerprint;
+                return true;
+            }
+            return false;
+        }
+
         private async Task SaveQ3PathToSettings()
         {
             try
@@ -1206,62 +1065,11 @@ namespace QuakeServerManager.ViewModels
                 LogToTerminal($"Error saving Q3 path to settings: {ex.Message}");
             }
         }
-        
+
         // Master Control Methods
-        private async void SyncMaps()
-        {
-            if (VpsConnections.Count == 0)
-            {
-                System.Windows.MessageBox.Show("No VPS connections available.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-            
-            StatusMessage = "Syncing maps to all VPS servers...";
-            LogToTerminal("Starting map sync to all VPS servers...");
-            
-            var successCount = 0;
-            var totalCount = VpsConnections.Count;
-            
-                            foreach (var connection in VpsConnections)
-                {
-                    try
-                    {
-                        LogToTerminal($"Syncing maps to {connection.Name} ({connection.Ip})...");
-                        var success = await _sshService.SyncMapsAsync(connection, Q3Path);
-                        if (success)
-                        {
-                            successCount++;
-                            LogToTerminal($"Successfully synced maps to {connection.Name}");
-                        }
-                        else
-                        {
-                            LogToTerminal($"Failed to sync maps to {connection.Name}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogToTerminal($"Error syncing maps to {connection.Name}: {ex.Message}");
-                    }
-                }
-            
-            StatusMessage = $"Map sync completed: {successCount}/{totalCount} servers updated";
-            LogToTerminal($"Map sync completed: {successCount}/{totalCount} servers updated");
-            
-            if (successCount == totalCount)
-            {
-                System.Windows.MessageBox.Show($"Successfully synced maps to all {totalCount} servers!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            else
-            {
-                System.Windows.MessageBox.Show($"Map sync completed with errors. {successCount}/{totalCount} servers updated.", "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-        
-        private bool CanSyncMaps() => VpsConnections.Count > 0;
-        
         public async Task CycleAllServersAsync(string operation)
         {
-            if (VpsConnections.Count == 0)
+            if (VpsManager.VpsConnections.Count == 0)
             {
                 System.Windows.MessageBox.Show("No VPS connections available.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
@@ -1271,9 +1079,9 @@ namespace QuakeServerManager.ViewModels
             LogToTerminal($"Starting {operation} on all VPS servers...");
             
             var successCount = 0;
-            var totalCount = VpsConnections.Count;
+            var totalCount = VpsManager.VpsConnections.Count;
             
-            foreach (var connection in VpsConnections)
+            foreach (var connection in VpsManager.VpsConnections)
             {
                 try
                 {
@@ -1308,16 +1116,16 @@ namespace QuakeServerManager.ViewModels
                     if (success)
                     {
                         successCount++;
-                        LogToTerminal($"Successfully executed {operation} on {connection.Name}");
+                        LogToTerminal($"Successfully executed {operation} on {connection.Name}", LogLevel.Success);
                     }
                     else
                     {
-                        LogToTerminal($"Failed to execute {operation} on {connection.Name}");
+                        LogToTerminal($"Failed to execute {operation} on {connection.Name}", LogLevel.Error);
                     }
                 }
                 catch (Exception ex)
                 {
-                    LogToTerminal($"Error executing {operation} on {connection.Name}: {ex.Message}");
+                    LogToTerminal($"Error executing {operation} on {connection.Name}: {ex.Message}", LogLevel.Error);
                 }
             }
             
@@ -1334,40 +1142,8 @@ namespace QuakeServerManager.ViewModels
             }
         }
 
-        public event PropertyChangedEventHandler? PropertyChanged;
 
-        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-        {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-        }
-
-        protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-        {
-            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
-            field = value;
-            OnPropertyChanged(propertyName);
-            return true;
-        }
     }
 
-    public class RelayCommand : ICommand
-    {
-        private readonly Action _execute;
-        private readonly Func<bool>? _canExecute;
 
-        public RelayCommand(Action execute, Func<bool>? canExecute = null)
-        {
-            _execute = execute ?? throw new ArgumentNullException(nameof(execute));
-            _canExecute = canExecute;
-        }
-
-        public event EventHandler? CanExecuteChanged
-        {
-            add { CommandManager.RequerySuggested += value; }
-            remove { CommandManager.RequerySuggested -= value; }
-        }
-
-        public bool CanExecute(object? parameter) => _canExecute?.Invoke() ?? true;
-        public void Execute(object? parameter) => _execute();
-    }
-} 
+}

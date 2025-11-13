@@ -1,0 +1,11 @@
+{
+  "Name": "crackshack central",
+  "Ip": "45.79.42.94",
+  "Port": 22,
+  "Username": "root",
+  "Password": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAW4uiY8gb4EafZfQPwmNmVQAAAAACAAAAAAAQZgAAAAEAACAAAACSJVvqIU0YuvoyP5sPflqIeWvLcbKSpwooY3bJFhNn/QAAAAAOgAAAAAIAACAAAAAtSJwPNbbyN6MTS2L+hRCSsNkJz4BQ1ki6BDjh01V5ASAAAAA1tG0qm0147yUaX3/0kBcTq1XcMnQITraI6QPrjolxGkAAAAA6zfOLfxV5cC8l2gfdiPDV0HtGw5BwN+xQcxo4deHrfYIw/QATBlEybDMtg2t9UU41MmEQ04pXf/IEyLb4bMIB",
+  "PrivateKeyPath": "",
+  "AuthMethod": 0,
+  "HostKeyFingerprint": "",
+  "SelectedClass": null
+}

@@ -1,0 +1,32 @@
+<Window x:Class="QuakeServerManager.Views.InputDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}" Height="200" Width="350"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        MinHeight="180" MinWidth="300">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <TextBlock Grid.Row="0" Text="{Binding Message}" 
+                   TextWrapping="Wrap" Margin="0,0,0,10"/>
+        
+        <TextBox Grid.Row="1" x:Name="ResponseTextBox" 
+                 Margin="0,0,0,15" Height="35" 
+                 VerticalContentAlignment="Center"
+                 FontSize="14"
+                 Padding="5,8"/>
+        
+        <StackPanel Grid.Row="2" Orientation="Horizontal" 
+                    HorizontalAlignment="Right">
+            <Button Content="OK" Width="75" Height="30" 
+                    Margin="5,0,0,0" Click="OkButton_Click"/>
+            <Button Content="Cancel" Width="75" Height="30" 
+                    Margin="5,0,0,0" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

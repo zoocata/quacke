@@ -16,7 +16,6 @@ namespace QuakeServerManager.Models
         private int _port = 27960;
         private string _gameType = "1";
         private string _map = "cpm3a";
-        private Class? _selectedClass;
         private bool _isRunning = false;
         private bool _isDeployed = false;
 
@@ -100,10 +99,27 @@ namespace QuakeServerManager.Models
         [JsonIgnore]
         public string DeploymentStatusDisplay => IsDeployed ? "✅ Deployed" : "❌ Not Deployed";
 
-        public Class? SelectedClass
+        // Docker-related properties
+        private string _dockerImageTag = string.Empty;
+        private string _containerId = string.Empty;
+        private List<string> _customMaps = new List<string>();
+
+        public string DockerImageTag
         {
-            get => _selectedClass;
-            set => SetProperty(ref _selectedClass, value);
+            get => _dockerImageTag;
+            set => SetProperty(ref _dockerImageTag, value);
+        }
+
+        public string ContainerId
+        {
+            get => _containerId;
+            set => SetProperty(ref _containerId, value);
+        }
+
+        public List<string> CustomMaps
+        {
+            get => _customMaps;
+            set => SetProperty(ref _customMaps, value);
         }
 
         private Dictionary<string, string> _advancedSettings = new()

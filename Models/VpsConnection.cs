@@ -13,6 +13,7 @@ namespace QuakeServerManager.Models
         private string _password = string.Empty;
         private string _privateKeyPath = string.Empty;
         private AuthMethod _authMethod = AuthMethod.Password;
+        private Class? _selectedClass;
 
         public string Name
         {
@@ -54,6 +55,20 @@ namespace QuakeServerManager.Models
         {
             get => _authMethod;
             set => SetProperty(ref _authMethod, value);
+        }
+
+        private string _hostKeyFingerprint = string.Empty;
+
+        public string HostKeyFingerprint
+        {
+            get => _hostKeyFingerprint;
+            set => SetProperty(ref _hostKeyFingerprint, value);
+        }
+
+        public Class? SelectedClass
+        {
+            get => _selectedClass;
+            set => SetProperty(ref _selectedClass, value);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

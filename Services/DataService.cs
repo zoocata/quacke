@@ -160,6 +160,8 @@ namespace QuakeServerManager.Services
                     var instance = JsonConvert.DeserializeObject<ServerInstance>(json);
                     if (instance != null && !string.IsNullOrWhiteSpace(instance.Name))
                     {
+                        // Decrypt RCON password
+                        instance.RconPassword = CryptoHelper.Unprotect(instance.RconPassword);
                         instances.Add(instance);
                     }
                     else if (instance != null && string.IsNullOrWhiteSpace(instance.Name))
@@ -230,8 +232,29 @@ namespace QuakeServerManager.Services
             var profileDir = Path.Combine(ProfilesDirectory, connectionName);
             Directory.CreateDirectory(profileDir);
 
+            // Create a copy with encrypted RCON password for serialization
+            var instanceToSave = new ServerInstance
+            {
+                Name = instance.Name,
+                ServerName = instance.ServerName,
+                Admin = instance.Admin,
+                Location = instance.Location,
+                Port = instance.Port,
+                MaxClients = instance.MaxClients,
+                RconPassword = CryptoHelper.Protect(instance.RconPassword), // Encrypt RCON password
+                Map = instance.Map,
+                GameType = instance.GameType,
+                AdvancedSettings = instance.AdvancedSettings,
+                CustomMaps = instance.CustomMaps,
+                IsDeployed = instance.IsDeployed,
+                IsRunning = instance.IsRunning,
+                // DeploymentStatus is computed property, don't copy
+                DockerImageTag = instance.DockerImageTag,
+                ContainerId = instance.ContainerId
+            };
+
             var instanceFile = Path.Combine(profileDir, $"{instance.Name}.json");
-            var json = JsonConvert.SerializeObject(instance, Formatting.Indented);
+            var json = JsonConvert.SerializeObject(instanceToSave, Formatting.Indented);
             await File.WriteAllTextAsync(instanceFile, json);
         }
 
@@ -310,5 +333,23 @@ namespace QuakeServerManager.Services
         public string LastQ3Path { get; set; } = string.Empty;
         public string LastSelectedConnection { get; set; } = string.Empty;
         public string LastSelectedInstance { get; set; } = string.Empty;
+
+        // Docker and first-run settings
+        public bool FirstRunCompleted { get; set; } = false;
+        public string Pak0Path { get; set; } = string.Empty;
+
+        // Single-image Docker deployment paths (no manual CLI required)
+        public string CpmaPath { get; set; } = string.Empty;
+        public string ServerExecutablePath { get; set; } = string.Empty;
+        public string MapsPath { get; set; } = string.Empty;
+
+        // Map sync settings
+        public bool MapSyncEnabled { get; set; } = true;
+        public int MapSyncIntervalHours { get; set; } = 24;
+        public DateTime LastMapRepoCheck { get; set; } = DateTime.MinValue;
+        public bool AutoUpdateMaps { get; set; } = false;
+
+        // Map repository configuration (for community map updates)
+        public string MapRepositoryUrl { get; set; } = "https://github.com/YOUR_USERNAME/quacke-maps";
     }
 } 

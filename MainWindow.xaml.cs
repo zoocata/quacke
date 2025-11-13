@@ -15,7 +15,7 @@ namespace QuakeServerManager
         public MainWindow()
         {
             InitializeComponent();
-            DataContext = new ViewModels.MainViewModel();
+            DataContext = new ViewModels.MainViewModel(this);
             
             // Set up password binding
             PasswordBox.PasswordChanged += PasswordBox_PasswordChanged;
@@ -90,7 +90,7 @@ namespace QuakeServerManager
 
         private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(MainViewModel.TerminalOutput))
+            if (e.PropertyName == nameof(MainViewModel.TerminalOutputText))
             {
                 // Auto-scroll to the bottom of the terminal only if user hasn't scrolled up
                 Dispatcher.BeginInvoke(() =>
@@ -122,10 +122,10 @@ namespace QuakeServerManager
 
         private void PasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
         {
-            if (DataContext is ViewModels.MainViewModel viewModel && 
-                viewModel.SelectedVpsConnection != null)
+            if (DataContext is ViewModels.MainViewModel viewModel &&
+                viewModel.VpsManager.SelectedVpsConnection != null)
             {
-                viewModel.SelectedVpsConnection.Password = PasswordBox.Password;
+                viewModel.VpsManager.SelectedVpsConnection.Password = PasswordBox.Password;
             }
         }
 
@@ -134,6 +134,23 @@ namespace QuakeServerManager
             if (PasswordBox.Password != password)
             {
                 PasswordBox.Password = password;
+            }
+        }
+
+        private void RconPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (DataContext is ViewModels.MainViewModel viewModel &&
+                viewModel.ServerManager.SelectedServerInstance != null)
+            {
+                viewModel.ServerManager.SelectedServerInstance.RconPassword = RconPasswordBox.Password;
+            }
+        }
+
+        public void UpdateRconPasswordBox(string rconPassword)
+        {
+            if (RconPasswordBox.Password != rconPassword)
+            {
+                RconPasswordBox.Password = rconPassword;
             }
         }
 
@@ -406,4 +423,4 @@ namespace QuakeServerManager
 
 
     }
-} 
+}

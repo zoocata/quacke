@@ -303,6 +303,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     
                     <TextBlock Grid.Row="0" Text="Server Configuration" 
@@ -496,6 +497,7 @@
                                                  Margin="0,0,0,10" Padding="5,3"
                                                  VerticalContentAlignment="Center"
                                                  FontSize="12"
+                                                 PasswordChanged="RconPasswordBox_PasswordChanged"
                                                  IsEnabled="{Binding SelectedServerInstance, Converter={StaticResource NotNullToBoolConverter}}"/>
                                      
                                     <Label Content="Max Clients:" FontWeight="SemiBold" Margin="0,0,0,2"/>
@@ -558,175 +560,14 @@
                                 </Expander>
                             </Border>
                             
-                            <!-- Class Settings Section (Collapsible) -->
-                            <Border Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="1" CornerRadius="5" Margin="0,0,0,15">
-                                <Expander Header="Class Settings" IsExpanded="False">
-                                    <Expander.Style>
-                                        <Style TargetType="Expander">
-                                            <Setter Property="Background" Value="Transparent"/>
-                                            <Setter Property="BorderThickness" Value="0"/>
-                                            <Setter Property="HeaderTemplate">
-                                                <Setter.Value>
-                                                    <DataTemplate>
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="🏳️" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                                            <TextBlock Text="{Binding}" FontWeight="Bold" FontSize="14" Foreground="#495057" VerticalAlignment="Center"/>
-                                                        </StackPanel>
-                                                    </DataTemplate>
-                                                </Setter.Value>
-                                            </Setter>
-                                        </Style>
-                                    </Expander.Style>
-                                <GroupBox BorderThickness="0" Padding="10">
-                                <StackPanel Margin="10">
-                                    <TextBlock Text="Configure the class for this server instance (see https://playmorepromode.com/guides/cpma-ntf-configs)" 
-                                               TextWrapping="Wrap" Margin="0,0,0,10" Foreground="#666" FontSize="11"/>
-                                    
-                                    <Label Content="Class Name (n):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Class name (e.g., Scout, Fighter, Tank, Sniper)"/>
-                                    <ComboBox ItemsSource="{Binding AvailableClasses}"
-                                              SelectedItem="{Binding SelectedServerInstance.SelectedClass, UpdateSourceTrigger=PropertyChanged}"
-                                              DisplayMemberPath="Name"
-                                              Margin="0,0,0,10" Padding="5,3"
-                                              VerticalContentAlignment="Center"
-                                              FontSize="12"
-                                              IsEnabled="{Binding SelectedServerInstance, Converter={StaticResource NotNullToBoolConverter}}">
-                                        <ComboBox.Style>
-                                            <Style TargetType="ComboBox">
-                                                <Style.Triggers>
-                                                    <Trigger Property="SelectedItem" Value="{x:Null}">
-                                                        <Setter Property="Background">
-                                                            <Setter.Value>
-                                                                <VisualBrush AlignmentX="Left" AlignmentY="Center" Stretch="None">
-                                                                    <VisualBrush.Visual>
-                                                                        <TextBlock Text="Select Class" 
-                                                                                   Foreground="Gray" 
-                                                                                   FontSize="12" 
-                                                                                   Margin="5,0,0,0"/>
-                                                                    </VisualBrush.Visual>
-                                                                </VisualBrush>
-                                                            </Setter.Value>
-                                                        </Setter>
-                                                    </Trigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </ComboBox.Style>
-                                    </ComboBox>
-                                    
-                                    <TextBlock Text="{Binding SelectedServerInstance.SelectedClass.Description}" 
-                                               Foreground="#666" FontSize="11" 
-                                               TextWrapping="Wrap" Margin="0,0,0,10"
-                                               Visibility="{Binding SelectedServerInstance.SelectedClass, Converter={StaticResource NotNullToVisibilityConverter}}"/>
-                                    
-                                    <!-- Class Configuration Panel -->
-                                    <StackPanel Visibility="{Binding SelectedServerInstance.SelectedClass, Converter={StaticResource NotNullToVisibilityConverter}}">
-                                        <TextBlock Text="Class Configuration:" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,5"/>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <!-- Left Column -->
-                                            <StackPanel Grid.Column="0">
-                                                <Label Content="Model (m):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Player model (e.g., slash, sarge)"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Model, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Base Speed (s):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Movement speed (e.g., 320)"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.BaseSpeed, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Spawn Health (h):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Health at spawn"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.SpawnHealth, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Maximum Armour (a):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Max armor"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.MaxArmour, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Armour Class (ac):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="0=Green, 1=Yellow, 2=Red"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.ArmourClass, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <!-- Right Column -->
-                                            <StackPanel Grid.Column="2">
-                                                <Label Content="Hook Type (ht):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="0=None, 1=Offhand, 2=Onhand"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.HookType, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Hook Pull (hp):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Grapple pull speed"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.HookPull, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <Label Content="Hook Speed (hs):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Grapple hook speed"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.HookSpeed, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                                <CheckBox Content="Double Jump (jd)" IsChecked="{Binding SelectedServerInstance.SelectedClass.DoubleJump, UpdateSourceTrigger=PropertyChanged}"
-                                                          Margin="0,0,0,8" FontSize="11" ToolTip="Can double-jump"/>
-                                                <CheckBox Content="Ramp Jump (jr)" IsChecked="{Binding SelectedServerInstance.SelectedClass.RampJump, UpdateSourceTrigger=PropertyChanged}"
-                                                          Margin="0,0,0,8" FontSize="11" ToolTip="Can ramp-jump"/>
-                                                <Label Content="Starting Weapon (sw):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Weapon number (from wX lines, or 1 for gauntlet)"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.StartingWeapon, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                        </Grid>
-                                        <!-- Weapons Row -->
-                                        <Grid Margin="0,5,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0">
-                                                <Label Content="Machine Gun (w2):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w2: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon2, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <Label Content="Shotgun (w3):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w3: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon3, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="4">
-                                                <Label Content="Machine Gun (w4):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w4: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon4, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="6">
-                                                <Label Content="Grenade Launcher (w5):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w5: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon5, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                        </Grid>
-                                        <Grid Margin="0,5,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0">
-                                                <Label Content="Rocket Launcher (w6):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w6: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon6, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <Label Content="Lightning Gun (w7):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w7: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon7, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="4">
-                                                <Label Content="Plasma Gun (w8):" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="w8: spawn,max,box,gun"/>
-                                                <TextBox Text="{Binding SelectedServerInstance.SelectedClass.Weapon8, UpdateSourceTrigger=PropertyChanged}"
-                                                         Margin="0,0,0,8" Padding="3" FontSize="11"/>
-                                            </StackPanel>
-                                        </Grid>
-                                    </StackPanel>
-                                </StackPanel>
-                                </GroupBox>
-                            </Expander>
-                            </Border>
+
                             
-                            <!-- Advanced Settings Section (Collapsible) -->
+
+                            
+
+
+                            
+                            <!-- Advanced Settings Section -->
                             <Border Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="1" CornerRadius="5" Margin="0,0,0,15">
                                 <Expander Header="Advanced Settings" IsExpanded="False">
                                     <Expander.Style>
@@ -1183,6 +1024,69 @@
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
+                    
+                    <!-- Server-wide Configuration Section -->
+                    <Border Grid.Row="3" Background="#F8F9FA" BorderBrush="#DEE2E6" BorderThickness="1" CornerRadius="5" Margin="0,15,0,0">
+                        <Expander Header="Server-wide Configuration" IsExpanded="False">
+                            <Expander.Style>
+                                <Style TargetType="Expander">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="HeaderTemplate">
+                                        <Setter.Value>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="🌐" FontSize="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding}" FontWeight="Bold" FontSize="14" Foreground="#495057" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Expander.Style>
+                        <GroupBox BorderThickness="0" Padding="10">
+                        <StackPanel Margin="10">
+                            <TextBlock Text="Configure server-wide settings that apply to all server instances on this VPS" 
+                                       TextWrapping="Wrap" Margin="0,0,0,10" Foreground="#666" FontSize="11"/>
+                            
+                            <Label Content="Class Configuration:" FontWeight="SemiBold" Margin="0,0,0,2" ToolTip="Class configuration that applies to all server instances"/>
+                            <ComboBox ItemsSource="{Binding AvailableClasses}"
+                                      SelectedItem="{Binding SelectedVpsConnection.SelectedClass, UpdateSourceTrigger=PropertyChanged}"
+                                      DisplayMemberPath="Name"
+                                      Margin="0,0,0,10" Padding="5,3"
+                                      VerticalContentAlignment="Center"
+                                      FontSize="12"
+                                      IsEnabled="{Binding SelectedVpsConnection, Converter={StaticResource NotNullToBoolConverter}}">
+                                <ComboBox.Style>
+                                    <Style TargetType="ComboBox">
+                                        <Style.Triggers>
+                                            <Trigger Property="SelectedItem" Value="{x:Null}">
+                                                <Setter Property="Background">
+                                                    <Setter.Value>
+                                                        <VisualBrush AlignmentX="Left" AlignmentY="Center" Stretch="None">
+                                                            <VisualBrush.Visual>
+                                                                <TextBlock Text="Select Class" 
+                                                                           Foreground="Gray" 
+                                                                           FontSize="12" 
+                                                                           Margin="5,0,0,0"/>
+                                                            </VisualBrush.Visual>
+                                                        </VisualBrush>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ComboBox.Style>
+                            </ComboBox>
+                            
+                            <TextBlock Text="{Binding SelectedVpsConnection.SelectedClass.Description}" 
+                                       Foreground="#666" FontSize="11" 
+                                       TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Visibility="{Binding SelectedVpsConnection.SelectedClass, Converter={StaticResource NotNullToVisibilityConverter}}"/>
+                        </StackPanel>
+                        </GroupBox>
+                        </Expander>
+                    </Border>
                 </Grid>
             </Border>
             
@@ -1361,7 +1265,7 @@
                              FontFamily="Consolas" 
                              FontSize="10"
                              IsReadOnly="True"
-                             Text="{Binding TerminalOutput, UpdateSourceTrigger=PropertyChanged}"
+                             Text="{Binding TerminalOutputText, Mode=OneWay}"
                              VerticalAlignment="Stretch"
                              HorizontalAlignment="Stretch"
                              TextWrapping="Wrap"
