@@ -1,0 +1,10 @@
+{
+  "Name": "Chicago",
+  "Ip": "172.234.220.96",
+  "Port": 22,
+  "Username": "root",
+  "Password": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAN/B7ISaV6UeXMWaTf30aqAAAAAACAAAAAAAQZgAAAAEAACAAAAB4RxA7HeiEbMZ8j0nRZ4Th7RfxrgACWX1J+PlWJLavaAAAAAAOgAAAAAIAACAAAABLJw6M6VN5Jm6F/uLEWXSPdJIe203NWzKfdIDgC5OiZBAAAABriCWZukoCIx2euZWYXg1EQAAAABGgbNcz37l+wIDlrMN3zbi7KXiTthp7URr41jT46KIN7pFmpjnAEprPGgWrw5dl5P0v40S9Pk1AgSXqzZe7lxI=",
+  "PrivateKeyPath": "",
+  "AuthMethod": 0,
+  "HostKeyFingerprint": ""
+}
